@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Alumnos | APP Virgen del Carmen</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#2563eb" />
+
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- <link rel="stylesheet" href="css/responsive.css" /> -->
+   <link rel="stylesheet" href="css/responsive.css" />
+</head>
+<body>
+  <h1>Alumnos registrados</h1>
+
+  <!-- Formulario -->
+  <form id="form-alumno" autocomplete="off">
+    <input id="nombre"   name="nombre"   placeholder="Nombre"       required />
+    <input id="apellido" name="apellido" placeholder="Apellido"     required />
+    <input id="grado"    name="grado"    placeholder="Grado (ej: 3ro)" required />
+    <input id="seccion"  name="seccion"  placeholder="Sección (ej: A)" required />
+    <button id="btn-enviar" type="submit">Registrar alumno</button>
+  </form>
+
+  <div id="msg" aria-live="polite"></div>
+
+  <!-- Lista -->
+  <ul id="lista-alumnos"></ul>
+
+  <div style="display:flex; justify-content:flex-end; margin:12px 0;">
+  <a href="scanner.html" 
+     style="background:#2563eb; color:#fff; padding:10px 16px; border-radius:8px; 
+            text-decoration:none; font-weight:600; font-family:sans-serif;">
+    📷 Escanear QR
+  </a>
+</div>
+
+
+  <!-- Lógica JS externa -->
+  <script src="js/app.js"></script>
+  <script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("service-worker.js");
+  }
+</script>
+
+  <noscript>Activa JavaScript para usar la aplicación.</noscript>
+</body>
+</html>

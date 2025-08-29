@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: app-virgen-del-carmen
+Version: 0.1.0
+Requires-Python: >=3.10
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: sqlalchemy>=2
+Requires-Dist: pydantic>=2
+Requires-Dist: python-dotenv
+Requires-Dist: pandas
+Requires-Dist: openpyxl
+Requires-Dist: qrcode[pil]

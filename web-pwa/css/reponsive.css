@@ -1,0 +1,19 @@
+/* Tablet */
+@media (max-width: 900px){
+  .container{ max-width:720px; }
+}
+
+/* Móvil */
+@media (max-width: 640px){
+  form{ grid-template-columns: 1fr; }
+  button{ grid-column:auto; width:100%; }
+  .item{ flex-direction:column; align-items:flex-start; }
+  h1{ font-size:1.35rem; }
+  .sub{ font-size:.9rem; }
+}
+
+/* Muy pequeño */
+@media (max-width: 360px){
+  .card{ padding:14px; border-radius:12px; }
+  input, button{ padding:10px; }
+}

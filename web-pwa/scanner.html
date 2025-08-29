@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Escáner QR | APP Virgen del Carmen</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#2563eb" />
+</head>
+<body class="scanner">
+  <header class="topbar">
+    <h1>Escáner QR</h1>
+    <nav>
+      <a href="index.html" class="btn" style="
+        background:#334155; color:#fff; padding:8px 12px; border-radius:8px;
+        text-decoration:none; font-weight:600;">← Alumnos</a>
+    </nav>
+    <span class="brand">IEI Virgen del Carmen</span>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <div class="row">
+        <input id="apiBase" class="input" placeholder="URL de API (http://192.168.1.10:8000)" />
+        <button class="btn" id="btnGuardar">Guardar</button>
+      </div>
+      <small class="muted">Usa la IP de tu PC si pruebas desde el celular.</small>
+    </section>
+
+    <section class="card">
+      <h2 style="margin:0 0 10px 0;font-size:18px">Escanear asistencia</h2>
+
+      <!-- Selector de cámara (nuevo) -->
+      <div class="row" style="margin-bottom:8px">
+        <select id="camSel" class="input" style="flex:1"></select>
+      </div>
+
+      <div id="reader" class="reader" style="display:none;"></div>
+      <div id="msg" class="msg"></div>
+      <p class="help">(Apunta la cámara al QR del estudiante)</p>
+      <div class="row">
+        <button id="btnScan" class="btn">📷 Iniciar escaneo</button>
+        <button id="btnStop" class="btn" style="display:none;background:#475569">✋ Detener</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <small>© <span id="y"></span> IEI Virgen del Carmen</small>
+  </footer>
+
+  <!-- Librería del lector QR -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <!-- Tu lógica separada -->
+  <script src="js/scanner.js"></script>
+</body>
+</html>

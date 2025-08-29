@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h3>Prueba directa de cámara</h3>
+  <video id="v" autoplay playsinline style="width:360px;height:auto;border:1px solid #ccc"></video>
+  <pre id="log" style="white-space:pre-wrap"></pre>
+  <script>
+    async function run(){
+      const log = (m)=>document.getElementById('log').textContent = m;
+      try{
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        document.getElementById('v').srcObject = s;
+        log("OK: cámara abierta.");
+      }catch(e){
+        log("Error cámara: " + e.name + " - " + e.message);
+        console.error(e);
+      }
+    }
+    run();
+  </script>
+</body>
+</html>
