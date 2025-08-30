@@ -11,3 +11,9 @@ build/
 .vscode/
 app.zip
 *.zip
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
