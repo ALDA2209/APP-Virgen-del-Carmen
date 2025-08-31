@@ -95,6 +95,11 @@ body.scanner{
 .scanner .muted{color:var(--muted)} .scanner .help{color:var(--muted); margin:8px 0 0}
 .scanner .foot{padding:18px; text-align:center; color:var(--muted); border-top:1px solid var(--line); margin-top:24px}
 
-
-.reader { width:100%; max-width:360px; height:260px; margin:0 auto;
-            border-radius:12px; overflow:hidden; background:#111; }
+/* que el video se adapte al contenedor cuadrado */
+#reader video{
+  width:100% !important;
+  height:100% !important;
+  object-fit: cover;    /* llena el cuadrado sin deformarse */
+}
+.reader{ width:100%; max-width:420px; margin:0 auto; border-radius:12px; overflow:hidden; background:#111; aspect-ratio:1/1; }
+#reader video{ width:100%!important; height:100%!important; object-fit:cover; }

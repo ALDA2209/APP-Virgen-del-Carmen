@@ -1,257 +1,149 @@
 // =====================
-// Config
+// Config básica
 // =====================
-const DEFAULT_API = location.origin;
-const API = localStorage.getItem("API_BASE") || DEFAULT_API;
-
 const $ = (id) => document.getElementById(id);
+const API_BASE = (localStorage.getItem("API_BASE") || location.origin).replace(/\/+$/,'');
 $("y") && ($("y").textContent = new Date().getFullYear());
 
-function toast(t, kind = "ok", ms = 4500) {
+// Guardar/mostrar API en el input (si existe en la página)
+(() => {
+  const apiInput = $("apiBase");
+  if (!apiInput) return;
+  const saved = localStorage.getItem("API_BASE");
+  if (saved) apiInput.value = saved;
+  $("btnGuardar")?.addEventListener("click", () => {
+    if (!apiInput.value) return;
+    localStorage.setItem("API_BASE", apiInput.value.trim());
+    alert("URL de API guardada");
+  });
+})();
+
+// =====================
+// Historial local
+// =====================
+const HIST_KEY = "SCAN_HISTORY_V1";
+const loadHistory   = () => { try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch { return []; } };
+const saveHistory   = (arr) => localStorage.setItem(HIST_KEY, JSON.stringify(arr));
+function renderHistory(){
+  const ul = $("hist"); if (!ul) return;
+  const items = loadHistory();
+  ul.innerHTML = items.length ? "" : `<li class="muted">(Sin lecturas aún)</li>`;
+  for (const it of items.slice().reverse()){
+    const li = document.createElement("li");
+    li.innerHTML = `<strong>${it.text}</strong><br><small>${it.status} · ${it.hora}</small>`;
+    ul.appendChild(li);
+  }
+}
+function appendHistory(entry){
+  const items = loadHistory();
+  items.push(entry);
+  if (items.length > 50) items.splice(0, items.length - 50);
+  saveHistory(items);
+  renderHistory();
+}
+$("btnClearHist")?.addEventListener("click", () => { saveHistory([]); renderHistory(); });
+
+// =====================
+// Lector QR (html5-qrcode)
+// =====================
+let qr = null;
+let running = false;
+let last = "";
+let lastAt = 0;
+
+function setMsg(text, isErr=false){
   const m = $("msg"); if (!m) return;
-  m.textContent = t || "";
-  m.className = "msg " + (kind === "err" ? "err" : "ok");
-  if (t) setTimeout(() => { m.textContent = ""; m.className = "msg"; }, ms);
+  m.textContent = text || "";
+  m.className = "msg" + (isErr ? " err" : " ok");
 }
 
-// =====================
-// Estado lector/cámara
-// =====================
-let html5QrCode = null;
-let isScanning = false;
-let isTransition = false;      // evita “already under transition”
-const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
-
-// =====================
-// Helpers cámara
-// =====================
-async function getCameras() {
-  try { return await Html5Qrcode.getCameras(); }
-  catch { return []; }
-}
-
-async function ensurePermission() {
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({ video: true });
-    s.getTracks().forEach(t => t.stop());
-  } catch {
-    throw new Error("Permiso de cámara denegado");
-  }
-}
-
-async function stopReader() {
-  if (!html5QrCode || !isScanning) { isScanning = false; return; }
-  if (isTransition) return;
-  isTransition = true;
-  try { await html5QrCode.stop(); await html5QrCode.clear(); } catch {}
-  isScanning = false;
-  isTransition = false;
-}
-
-// =====================
-// Lector QR (config robusta)
-// =====================
-async function startHtml5Qr(cameraIdOrConfig) {
-  if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
-
-  await html5QrCode.start(
-    cameraIdOrConfig,
-    {
-      fps: 12,
-      qrbox: { width: 260, height: 260 },   // obliga a acercar (mejor lectura)
-      aspectRatio: 1.7778,
-      rememberLastUsedCamera: true,
-      disableFlip: true,
-      formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE ],
-      // minTimeBetweenScansMillis: 1500, // si tu build lo soporta
-    },
-    onScanSuccess,
-    () => {}
-  );
-
-  // Fix móviles e intentar enfoque continuo / linterna
-  const v = document.querySelector("#reader video");
-  if (v) {
-    v.setAttribute("playsinline",""); v.muted = true;
-    try { await html5QrCode.applyVideoConstraints({ advanced: [{ focusMode: "continuous" }] }); } catch {}
-    // try { await html5QrCode.applyVideoConstraints({ advanced: [{ torch: true }] }); } catch {}
-  }
-}
-
-// start con candado
-async function startLocked(config) {
-  if (isTransition || isScanning) return;
-  isTransition = true;
-  try {
-    await startHtml5Qr(config);
-    isScanning = true;
-  } finally {
-    isTransition = false;
-  }
-}
-
-// =====================
-// Escaneo estable
-// =====================
-let lastText = "", lastAt = 0;
-let stable = { text: "", count: 0 };
-let isPosting = false;
-
-async function onScanSuccess(decodedText) {
-  // Requiere 2 frames seguidos iguales
-  if (decodedText !== stable.text) {
-    stable = { text: decodedText, count: 1 };
-    return;
-  } else if (++stable.count < 2) {
-    return;
-  }
-  stable = { text: "", count: 0 };
-
+function onScanSuccess(text){
   const now = Date.now();
-  if (decodedText === lastText && now - lastAt < 2000) return; // más “calmado”
-  lastText = decodedText; lastAt = now;
+  if (text === last && now - lastAt < 1500) return; // debounce
+  last = text; lastAt = now;
 
-  // Pausa mientras se POSTEA (evita doble envío)
-  try { html5QrCode?.pause(true); } catch {}
+  setMsg("QR leído: " + text);
+  navigator.vibrate?.(60);
 
-  if (isPosting) return;
-  isPosting = true;
+  // Pausar mientras enviamos para que no machaque el mensaje
+  try { qr?.pause?.(true); } catch {}
 
-  toast("Leyendo QR…");
+  // OJO: tu endpoint actual según Swagger es /asistencias/asistencias/scan
+  const URL = `${API_BASE}/asistencias/asistencias/scan`;
+  console.log("POST", URL);
 
-  try {
-    const r = await fetch(`${API}/asistencias/scan`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codigo_qr: decodedText })
-    });
-
+  fetch(URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ codigo_qr: text })
+  })
+  .then(async r => {
     const raw = await r.text();
-    let data; try { data = JSON.parse(raw); } catch { data = { detail: raw }; }
-    if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${raw}`);
+    const data = raw ? JSON.parse(raw) : {};
+    const status = data?.status || "ok";
+    const hora   = data?.hora || new Date().toISOString();
 
-    const who = data.alumno ?? data.nombre ?? ("ID " + (data.alumno_id ?? ""));
-    const hh  = (data.hora || "").slice(11, 19);
-    toast((data.status === "registrado" || data.ok)
-      ? `✓ Registrado: ${who} · ${hh}`
-      : `• Ya registrado hoy: ${who} · ${hh}`, "ok", 5000);
-    if (navigator.vibrate) navigator.vibrate([100,30,100]);
-  } catch (e) {
-    console.error("Error de red/servidor:", e);
-    toast((e?.name?`[${e.name}] `:"") + (e?.message || "Error de red / servidor"), "err", 6000);
-  } finally {
-    isPosting = false;
-    setTimeout(() => { try { html5QrCode?.resume(); } catch {} }, 1200);
+    setMsg(`✓ ${status}${data?.alumno ? ` · ${data.alumno}` : ""}`);
+    appendHistory({ text, status, hora });
+  })
+  .catch(e => {
+    console.error(e);
+    setMsg(String(e), true);
+    appendHistory({ text, status: "error_envio", hora: new Date().toISOString() });
+  })
+  .finally(() => {
+    setTimeout(() => { try { qr?.resume?.(); } catch {} }, 1200);
+  });
+}
+
+async function startScanner(){
+  if (running) return;
+  const reader = $("reader");
+  reader.style.display = "block";
+
+  if (!qr) qr = new Html5Qrcode("reader");
+
+  try{
+    await qr.start(
+      { facingMode: "environment" },
+      {
+        fps: 10,
+        // Marco siempre centrado y cuadrado (70% del lado menor)
+        qrbox: (vw, vh) => {
+          const side = Math.floor(Math.min(vw, vh) * 0.7);
+          return { width: side, height: side };
+        },
+        disableFlip: true
+      },
+      onScanSuccess
+    );
+    running = true;
+    $("btnScan").disabled = true;
+    $("btnStop").style.display = "inline-block";
+    setMsg("Cámara iniciada");
+  }catch(err){
+    console.error("No se pudo iniciar cámara:", err);
+    setMsg("No se pudo iniciar cámara.", true);
+    reader.style.display = "none";
   }
 }
 
-// =====================
-// UI
-// =====================
-$("btnScan")?.addEventListener("click", async () => {
-  if (isScanning || isTransition) return;
-
-  if (!(location.protocol === "https:" || ["localhost","127.0.0.1"].includes(location.hostname))) {
-    toast("Usa HTTPS (ngrok) o localhost.", "err"); return;
-  }
-
-  $("reader").style.display = "block";
-  $("btnScan").disabled = true;
-  $("btnStop").style.display = "inline-block";
-
-  try {
-    await ensurePermission();
-
-    // 1) detecta cámaras
-    const cams = await getCameras();
-    if (!cams.length) throw new Error("No se encontraron cámaras (permiso denegado o dispositivo ocupado)");
-
-    // 2) elige trasera si existe
-    const back = cams.find(c => /back|rear|environment|trasera/i.test(c.label));
-    const first = cams[0];
-    const last  = cams[cams.length - 1];
-
-    // 3) Cascada anti pantalla-negra
-    try {
-      await startLocked({ deviceId: { exact: (back ?? first).id } });
-      return;
-    } catch { await stopReader(); await sleep(120); }
-
-    try {
-      await startLocked({ facingMode: { exact: "environment" } });
-      return;
-    } catch { await stopReader(); await sleep(120); }
-
-    try {
-      await startLocked({ facingMode: "environment" });
-      return;
-    } catch { await stopReader(); await sleep(120); }
-
-    await startLocked({ deviceId: { exact: last.id } });
-
-  } catch (err) {
-    console.error("Fallo al iniciar cámara:", err);
-    toast((err?.name?`[${err.name}] `:"") + (err?.message || "Error al iniciar"), "err", 6000);
-    $("reader").style.display = "none";
-    $("btnStop").style.display = "none";
-    $("btnScan").disabled = false;
-  }
-});
-
-$("btnStop")?.addEventListener("click", async () => {
-  if (isTransition) return;
-  await stopReader();
+async function stopScanner(){
+  if (!qr || !running) return;
+  try { await qr.stop(); await qr.clear(); } catch {}
+  running = false;
   $("reader").style.display = "none";
   $("btnScan").disabled = false;
   $("btnStop").style.display = "none";
-  lastText = ""; lastAt = 0;
-});
+  last = ""; lastAt = 0;
+  setMsg("Cámara detenida");
+}
 
-// Cambio manual desde el <select id="camSel"> (si lo tienes)
-$("camSel")?.addEventListener("change", async (e) => {
-  const id = e.target.value;
-  if (!id || isTransition) return;
-  try {
-    await stopReader();
-    await sleep(150);
-    $("reader").style.display = "block";
-    $("btnStop").style.display = "inline-block";
-    $("btnScan").disabled = true;
-    await startLocked({ deviceId: { exact: id } }); // sin width/height
-  } catch (err) {
-    console.error(err);
-    toast("No se pudo cambiar de cámara", "err");
-  }
-});
+// Eventos
+$("btnScan")?.addEventListener("click", startScanner);
+$("btnStop")?.addEventListener("click", stopScanner);
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopScanner(); });
 
-// Pausar si la pestaña se oculta (evita quedarnos con negro)
-document.addEventListener("visibilitychange", async () => {
-  if (!html5QrCode) return;
-  try {
-    if (document.hidden && isScanning) html5QrCode.pause(true);
-    else if (!document.hidden && isScanning) html5QrCode.resume();
-  } catch {}
-});
-
-// =====================
-// Arranque: llenar combo cámaras
-// =====================
-(async () => {
-  try {
-    await ensurePermission();
-    const cams = await getCameras();
-    const sel = $("camSel");
-    if (sel) {
-      sel.innerHTML = "";
-      cams.forEach(c => {
-        const o = document.createElement("option");
-        o.value = c.id; o.textContent = c.label || c.id;
-        sel.appendChild(o);
-      });
-      const back = cams.find(c => /back|rear|environment|trasera/i.test(c.label));
-      if (back) sel.value = back.id;
-    }
-  } catch {
-    // se pedirá al iniciar
-  }
-})();
+// Pintar historial al cargar
+renderHistory();

@@ -1,75 +1,103 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from datetime import date, datetime
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from sqlalchemy.orm import Session
+from sqlalchemy import func
 
-router = APIRouter()
+from src.asistencias.db import get_db
+from src.asistencias.models import Alumno, Asistencia
 
-# ===== Modelos =====
-class Asistencia(BaseModel):
-    alumno_id: int
-    fecha: date
-    presente: bool = True
+# Mantengo el prefix para no romper tu front: /asistencias/asistencias/scan
+router = APIRouter(prefix="/asistencias")
 
-class ScanPayload(BaseModel):
+class ScanIn(BaseModel):
     codigo_qr: str
 
-# ===== "BD" en memoria =====
-asistencias_db: list[Asistencia] = []                # compatible con tu POST/GET actuales
-_asistencias_idx: set[tuple[date, int]] = set()      # para evitar duplicados (fecha, alumno_id)
+def ahora_pe():
+    return datetime.now(ZoneInfo("America/Lima"))
 
-# Importa la "BD" de alumnos para validar
-try:
-    from src.asistencias.api.alumnos import _alumnos  # lista de AlumnoOut
-except Exception:
-    _alumnos = []
-
-def _parse_id(desde_qr: str) -> int | None:
+def limpiar_texto(raw: str) -> str:
     """
-    Acepta:
-      - "123"
-      - "ID:123", "ID-123", "ALUMNO=123", etc. (toma el último número)
+    Convierte a un nombre 'amigable': letras (incluye tildes/ñ), espacios y guiones.
+    Colapsa espacios y recorta extremos.
     """
-    t = (desde_qr or "").strip()
-    m = re.search(r'(\d+)$', t)
-    return int(m.group(1)) if m else None
+    txt = re.sub(r"[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s\-]", " ", raw or "")
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
 
-def _existe_alumno(alumno_id: int) -> bool:
-    return any(a.id == alumno_id for a in _alumnos)
-
-# ===== Endpoints compatibles que ya tenías =====
-@router.get("/", response_model=list[Asistencia])
-def listar_asistencias():
-    return asistencias_db
-
-@router.post("/", response_model=Asistencia)
-def registrar_asistencia(asistencia: Asistencia):
-    # Evita duplicado por día si quieres también aquí:
-    clave = (asistencia.fecha, asistencia.alumno_id)
-    if clave in _asistencias_idx:
-        # Ya existe para ese día; devolvemos la misma asistencia sin duplicarla
-        return asistencia
-    asistencias_db.append(asistencia)
-    _asistencias_idx.add(clave)
-    return asistencia
-
-# ===== Endpoint para el escáner =====
 @router.post("/scan")
-def registrar_asistencia_por_qr(payload: ScanPayload):
-    alumno_id = _parse_id(payload.codigo_qr)
-    if alumno_id is None:
-        raise HTTPException(status_code=400, detail="QR inválido: no encuentro ID numérico")
+def registrar(scan: ScanIn, db: Session = Depends(get_db)):
+    txt_raw = (scan.codigo_qr or "").strip()
+    hora_pe = ahora_pe()
 
-    if not _existe_alumno(alumno_id):
-        raise HTTPException(status_code=404, detail="Alumno no encontrado")
+    # 1) ¿trae un número? => úsalo como ID preferente
+    alumno = None
+    m = re.search(r"\d+", txt_raw)
+    if m:
+        alumno_id = int(m.group())
+        alumno = db.get(Alumno, alumno_id)
+        if not alumno:
+            # Intentamos sacar un nombre legible del QR
+            nombre_limpio = limpiar_texto(txt_raw)
+            if not nombre_limpio:
+                nombre_limpio = f"Alumno {alumno_id}"
+            # Crea alumno con ese ID
+            alumno = Alumno(id=alumno_id, nombre=nombre_limpio, apellido=None)
+            db.add(alumno)
+            db.flush()  # asigna ID sin cerrar transacción
 
-    hoy = date.today()
-    clave = (hoy, alumno_id)
+    # 2) Si no hay ID o no encontramos, usar el nombre del QR
+    if not alumno:
+        nombre_limpio = limpiar_texto(txt_raw)
+        if nombre_limpio:
+            # separar nombre/apellido (opcional)
+            partes = nombre_limpio.split(" ")
+            nombre = partes[0].capitalize()
+            apellido = " ".join(p.capitalize() for p in partes[1:]) if len(partes) > 1 else None
 
-    if clave in _asistencias_idx:
-        return {"ok": True, "status": "duplicado", "alumno_id": alumno_id, "fecha": hoy.isoformat()}
+            # buscar coincidencia exacta-insensible
+            q = db.query(Alumno).filter(func.lower(Alumno.nombre) == func.lower(nombre))
+            if apellido:
+                q = q.filter(func.coalesce(func.lower(Alumno.apellido), "") == func.coalesce(func.lower(apellido), ""))
+            alumno = q.first()
 
-    asistencias_db.append(Asistencia(alumno_id=alumno_id, fecha=hoy, presente=True))
-    _asistencias_idx.add(clave)
+            if not alumno:
+                alumno = Alumno(nombre=nombre, apellido=apellido)
+                db.add(alumno)
+                db.flush()
+        else:
+            # Si ni siquiera podemos formar un nombre, guardamos el QR como está,
+            # pero igualmente lo registramos (sin alumno asociado)
+            row = Asistencia(alumno_id=None, texto_qr=txt_raw, status="qr_sin_id", hora=hora_pe)
+            db.add(row); db.commit(); db.refresh(row)
+            return {"status": "qr_sin_id", "qr": txt_raw, "hora": row.hora.isoformat()}
 
-    return {"ok": True, "status": "registrado", "alumno_id": alumno_id, "fecha": hoy.isoformat(), "hora": datetime.now().isoformat()}
+    # 3) Registrar asistencia (siempre 'registrado' porque ya garantizamos alumno)
+    row = Asistencia(alumno_id=alumno.id, texto_qr=txt_raw, status="registrado", hora=hora_pe)
+    db.add(row); db.commit(); db.refresh(row)
+
+    nombre_out = f"{alumno.nombre} {alumno.apellido or ''}".strip()
+    return {
+        "status": "registrado",
+        "alumno_id": alumno.id,
+        "alumno": nombre_out,
+        "hora": row.hora.isoformat(),
+    }
+
+@router.get("")
+def listar_ultimas(limit: int = 50, db: Session = Depends(get_db)):
+    q = (db.query(Asistencia).order_by(Asistencia.hora.desc())
+         .limit(max(1, min(limit, 200))).all())
+    def row2dict(a: Asistencia):
+        return {
+            "id": a.id,
+            "texto_qr": a.texto_qr,
+            "status": a.status,
+            "hora": a.hora.isoformat(),
+            "alumno_id": a.alumno_id,
+            "alumno": (f"{a.alumno.nombre} {a.alumno.apellido or ''}".strip()
+                       if a.alumno else None),
+        }
+    return [row2dict(a) for a in q]
